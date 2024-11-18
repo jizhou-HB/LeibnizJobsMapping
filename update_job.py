@@ -2,6 +2,8 @@
 import os
 from datetime import datetime
 
+import pandas as pd
+
 from get_job_info import add_geolocation, process_address_data, retrieve_job_listings
 
 
