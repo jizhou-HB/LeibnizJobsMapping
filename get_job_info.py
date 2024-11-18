@@ -1,10 +1,10 @@
 import random
 
-#import pandas as pd
+import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from geopy.geocoders import Nominatim
-import pandas as pd
+
 
 
 def retrieve_job_listings(url="https://leibniz-psychology.org/jobboerse"):
