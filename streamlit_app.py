@@ -1,5 +1,3 @@
-import subprocess
-
 import folium
 import pandas as pd
 import streamlit as st
@@ -149,11 +147,11 @@ def update_jobs():
 
 def refresh_jobs():
     try:
-        subprocess.run(update_jobs(), check=True)
+        update_jobs()
         st.success("Job listings successfully updated!")
         st.rerun()
-    except subprocess.CalledProcessError:
-        st.error("Failed to update job listings")
+    except Exception as e:
+        st.error(f"Failed to update job listings: {str(e)}")
 
 
 def main():
