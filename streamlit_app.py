@@ -1,4 +1,4 @@
-import folium
+fimport folium
 import pandas as pd
 import streamlit as st
 from streamlit_folium import st_folium
@@ -183,7 +183,7 @@ def main():
     max_date = pd.to_datetime([job["published_date"] for job in jobs]).max()
 
     selected_date = st.sidebar.date_input(
-        "Select Date",
+        "Select range: including posts from which day to today?",
         value=min_date,
         min_value=min_date,
         max_value=pd.to_datetime("today").date(),
