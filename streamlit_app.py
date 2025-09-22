@@ -87,7 +87,7 @@ def add_geolocation(address_book, user_agent="city_to_coordinates"):
             coordinates.append((lat, lon))
         else:
             # Lookup new city
-            location = geolocator.geocode(city)
+            location = geolocator.geocode(city,timeout=10)
             if location:
                 # Cache the base coordinates
                 coordinates_cache[city] = (location.latitude, location.longitude)
