@@ -58,12 +58,24 @@ def main():
     st.title("🗺️ Job on Map — Leibniz Psychology Jobs")
     st.caption("All Leibniz psychology job postings on one interactive map.")
 
+    # brand purple for selected filter chips (instead of default red)
+    st.markdown("""
+        <style>
+        .stMultiSelect [data-baseweb="tag"] {
+            background-color: #e8e5ff !important;
+            color: #4C4CFF !important;
+        }
+        .stMultiSelect [data-baseweb="tag"] svg {
+            color: #4C4CFF !important;
+        }
+        .stDateInput input {
+            border-color: #4C4CFF !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
     if not is_csv_recent():
-        st.error(
-            "Job listings are more than 24 hours old. "
-            "Please update by running: `python3 ./update_job.py`"
-        )
-        return
+        st.caption("⚠️ Data last updated: see published dates. Job listings may be outdated.")
 
     jobs = read_jobs_data("latest_job.csv")
     if not jobs:
