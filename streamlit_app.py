@@ -1,3 +1,4 @@
+import math
 import re
 import folium
 import pandas as pd
@@ -45,6 +46,16 @@ def contract_type(title: str) -> str:
 
 def worktime_type(title: str) -> str:
     return classify(title, WORKTIME_RULES) or "Full-time / not specified"
+
+
+def haversine_km(lat1, lon1, lat2, lon2):
+    """Great-circle distance in km between two coordinates."""
+    R = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlon / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 def is_english(title: str) -> bool:
@@ -147,6 +158,14 @@ def main():
         help="Leave empty to see all locations",
     )
 
+    # distance filter (only active when a city is selected)
+    radius_km = st.sidebar.selectbox(
+        "Distance from selected city",
+        ["All", 25, 50, 100],
+        index=0,
+        help="Pick a city above, then show only jobs within this radius.",
+    )
+
     # date range
     df["published_date"] = pd.to_datetime(df["published_date"])
     min_date = df["published_date"].min().date()
@@ -170,6 +189,14 @@ def main():
     )
     if selected_cities:
         mask &= df["city"].isin(selected_cities)
+        if radius_km != "All":
+            center_city = selected_cities[0]
+            center_row = df[df["city"] == center_city].iloc[0]
+            c_lat = center_row["position"]["lat"]
+            c_lon = center_row["position"]["lng"]
+            mask &= df["position"].apply(
+                lambda p: haversine_km(c_lat, c_lon, p["lat"], p["lng"]) <= radius_km
+            )
     if search:
         mask &= df["title"].str.lower().str.contains(search)
 
