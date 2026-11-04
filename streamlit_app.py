@@ -72,14 +72,32 @@ def main():
     # brand purple for selected filter chips (instead of default red)
     st.markdown("""
         <style>
-        .stMultiSelect [data-baseweb="tag"] {
+        /* all selected filter chips: light purple */
+        [data-baseweb="select"] span,
+        [data-baseweb="tag"],
+        [data-baseweb="input"] span[data-baseweb="tag"],
+        .stMultiSelect span,
+        [class*="baseweb tag"] {
             background-color: #e8e5ff !important;
             color: #4C4CFF !important;
+            border-color: #c8c4f5 !important;
         }
-        .stMultiSelect [data-baseweb="tag"] svg {
+        [data-baseweb="tag"] svg,
+        [class*="baseweb tag"] svg {
+            color: #4C4CFF !important;
+            fill: #4C4CFF !important;
+        }
+        [data-baseweb="tag"] span,
+        [class*="baseweb tag"] span {
             color: #4C4CFF !important;
         }
-        .stDateInput input {
+        /* date input border */
+        .stDateInput input,
+        [data-baseweb="input"] input {
+            border-color: #c8c4f5 !important;
+        }
+        /* selectbox focus ring */
+        [data-baseweb="select"] > div {
             border-color: #4C4CFF !important;
         }
         </style>
