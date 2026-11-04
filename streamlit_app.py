@@ -1,274 +1,216 @@
+import re
 import folium
 import pandas as pd
 import streamlit as st
 from streamlit_folium import st_folium
+from datetime import datetime
 
 from jobs_map import is_csv_recent, read_jobs_data
 
-import os
-from datetime import datetime
-#import pandas as pd
-# from get_job_info import add_geolocation, process_address_data, retrieve_job_listings
-import random
-#import pandas as pd
-import requests
-from bs4 import BeautifulSoup
-from geopy.geocoders import Nominatim
+
+# --- classification helpers (work on the job title text) ---
+
+POSITION_RULES = [
+    ("Professor / Tenure", r"professor|tenure|w2|w3|chair"),
+    ("Postdoc", r"post.?doc|postdoctoral"),
+    ("PhD / Doktorand", r"phd|doktorand|doctoral|Promotion"),
+    ("Psychologist / Therapist", r"psycholog|psychotherapeut|therapeut|neuropsycholog"),
+    ("Research Staff", r"mitarbeiter|associate|assistant|researcher|scientist|wissenschaft"),
+    ("IT / Data / Admin", r"data|software|it.|admin|dev|engineer|informatik"),
+]
+
+CONTRACT_RULES = [
+    ("Permanent (unbefristet)", r"unbefristet|permanent|tenure|unlimited"),
+]
+
+WORKTIME_RULES = [
+    ("Part-time", r"\d{1,3}\s*%|teilzeit|part.?time|\d{1,2}\s*wostd|half.?time"),
+]
 
 
-
-def retrieve_job_listings(url="https://leibniz-psychology.org/jobboerse"):
-    """
-    Retrieve job listings from the specified URL
-    Returns a list of job listings or empty list if none found
-    """
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, "html.parser")
-
-        url_prefix = "https://leibniz-psychology.org"
-        addresses = []
-
-        for item in soup.find_all("div", class_="article articletype-0"):
-            try:
-                address = item.find("a", itemprop="url").get("title")
-                url = url_prefix + item.find("a", itemprop="url").get("href")
-                date = item.find("time", itemprop="datePublished").get("datetime")
-                addresses.append(
-                    {"address": address, "url": url, "published_date": date}
-                )
-            except (AttributeError, TypeError):
-                continue
-
-        return addresses
-    except requests.RequestException as e:
-        print(f"Error retrieving job listings: {e}")
-        return []
+def classify(title: str, rules) -> str | None:
+    for label, pattern in rules:
+        if re.search(pattern, title, re.IGNORECASE):
+            return label
+    return None
 
 
-def process_address_data(addresses):
-    """
-    Process the raw address data into a structured DataFrame
-    Returns DataFrame with columns: city, title, published date, url
-    """
-    if not addresses:
-        return pd.DataFrame(columns=["city", "title", "published date", "url"])
-
-    address_book = pd.DataFrame(addresses)
-    address_book.columns = ["address", "url", "published date"]
-
-    address_book["city"] = address_book["address"].str.split(":").str[0]
-    address_book["title"] = (
-        address_book["address"].str.split(":", n=1).str[1].str.strip()
-    )
-
-    return address_book[["city", "title", "published date", "url"]]
+def position_type(title: str) -> str:
+    return classify(title, POSITION_RULES) or "Other"
 
 
-def add_geolocation(address_book, user_agent="city_to_coordinates"):
-    """
-    Add geolocation data to the address book using cached German city coordinates
-    """
-    from germany_cities_cache import load_cache, save_cache
-
-    # Load existing cache
-    coordinates_cache = load_cache()
-    geolocator = Nominatim(user_agent=user_agent)
-    coordinates = []
-    cache_updated = False
-
-    for city in address_book["city"]:
-        if city in coordinates_cache:
-            # Use cached coordinates with small random offset
-            base_lat, base_lon = coordinates_cache[city]
-            lat = base_lat + random.uniform(-0.02, 0.02)
-            lon = base_lon + random.uniform(-0.02, 0.02)
-            coordinates.append((lat, lon))
-        else:
-            # Lookup new city
-            location = geolocator.geocode(city,timeout=10)
-            if location:
-                # Cache the base coordinates
-                coordinates_cache[city] = (location.latitude, location.longitude)
-                cache_updated = True
-                # Add random offset for display
-                lat = location.latitude + random.uniform(-0.02, 0.02)
-                lon = location.longitude + random.uniform(-0.02, 0.02)
-                coordinates.append((lat, lon))
-            else:
-                coordinates.append(None)
-
-    # Save updated cache if new cities were added
-    if cache_updated:
-        save_cache(coordinates_cache)
-
-    address_book["latitude"] = [coord[0] if coord else None for coord in coordinates]
-    address_book["longitude"] = [coord[1] if coord else None for coord in coordinates]
-
-    return address_book
+def contract_type(title: str) -> str:
+    return classify(title, CONTRACT_RULES) or "Not specified"
 
 
-def save_to_csv(address_book, filename):
-    """
-    Save address book data to a CSV file and create/update symbolic link
-    """
-    if not address_book.empty:
-        address_book.to_csv(filename, index=False)
-        # Create/update symbolic link to latest file
-        symlink_name = "latest_job.csv"
-        if os.path.exists(symlink_name):
-            os.remove(symlink_name)
-        os.symlink(filename, symlink_name)
+def worktime_type(title: str) -> str:
+    return classify(title, WORKTIME_RULES) or "Full-time / not specified"
 
 
-def update_jobs():
-    """
-    Main function to orchestrate the job listing retrieval and processing
-    """
-    # Retrieve job listings
-    addresses = retrieve_job_listings()
-
-    # Process address data
-    address_book = process_address_data(addresses)
-
-    # Add geolocation data
-    address_book = add_geolocation(address_book)
-
-    # Generate filename with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"job_listings_{timestamp}.csv"
-
-    # Save to CSV
-    save_to_csv(address_book, filename)
-    print(f"results are written to {filename}")
-
-
-
-def refresh_jobs():
-    try:
-        update_jobs()
-        st.success("Job listings successfully updated!")
-        st.rerun()
-    except Exception as e:
-        st.error(f"Failed to update job listings: {str(e)}")
+def is_english(title: str) -> bool:
+    """A rough split: titles without German umlauts / typical German words count as English."""
+    return not re.search(r"mitarbeiter|wissenschaft|psycholog|therapeut|bekleidung", title, re.IGNORECASE)
 
 
 def main():
-    st.set_page_config(page_title="Job Locations Map", layout="wide")
-    st.title("Job Locations Map")
+    st.set_page_config(page_title="Job on Map — Leibniz Psychology", layout="wide")
 
-    # Add refresh button
-    if st.button("Refresh Job Listings"):
-        refresh_jobs()
+    st.title("🗺️ Job on Map — Leibniz Psychology Jobs")
+    st.caption("All Leibniz psychology job postings on one interactive map.")
 
     if not is_csv_recent():
         st.error(
-            "Job listings are more than 24 hours old. Please update job listings by running: python3 ./update_job.py"
+            "Job listings are more than 24 hours old. "
+            "Please update by running: `python3 ./update_job.py`"
         )
         return
 
-    # Read jobs data
     jobs = read_jobs_data("latest_job.csv")
-
     if not jobs:
         st.error("No job data available")
         return
 
-    # Add filters in sidebar
-    st.sidebar.header("Filters")
+    # enrich each job with filterable fields
+    for job in jobs:
+        job["position_type"] = position_type(job["title"])
+        job["contract"] = contract_type(job["title"])
+        job["worktime"] = worktime_type(job["title"])
+        job["lang"] = "English" if is_english(job["title"]) else "German"
 
-    # Date filter
-    min_date = pd.to_datetime([job["published_date"] for job in jobs]).min()
-    max_date = pd.to_datetime([job["published_date"] for job in jobs]).max()
+    df = pd.DataFrame(jobs)
 
-    selected_date = st.sidebar.date_input(
-        "Select range: including posts from which day to today?",
-        value=min_date,
-        min_value=min_date,
-        max_value=pd.to_datetime("today").date(),
+    # --- sidebar filters ---
+    st.sidebar.header("🔎 Filters")
+
+    # free-text search
+    search = st.sidebar.text_input(
+        "Search title",
+        placeholder="e.g. klinisch, Postdoc, E13 …",
+    ).strip().lower()
+
+    # position type (multi-select)
+    type_options = sorted(df["position_type"].unique())
+    selected_types = st.sidebar.multiselect(
+        "Position type",
+        type_options,
+        default=type_options,
     )
 
-    # Convert jobs to DataFrame for mapping
-    df = pd.DataFrame(
-        [
-            {
-                "lat": job["position"]["lat"],
-                "lon": job["position"]["lng"],
-                "title": job["title"],
-                "city": job["city"],
-                "published_date": job["published_date"],
-                "url": job["url"],
-            }
-            for job in jobs
-        ]
+    # contract / permanency
+    contract_options = sorted(df["contract"].unique())
+    selected_contracts = st.sidebar.multiselect(
+        "Contract",
+        contract_options,
+        default=contract_options,
+        help=(
+            "'Permanent' is only flagged when the posting title explicitly says "
+            "unbefristet / permanent / tenure. Most listings do not mention "
+            "contract type in the title — check the detail page."
+        ),
     )
 
-    # Apply filters
+    # work time
+    worktime_options = sorted(df["worktime"].unique())
+    selected_worktime = st.sidebar.multiselect(
+        "Work time",
+        worktime_options,
+        default=worktime_options,
+    )
+
+    # language of the posting
+    lang_options = sorted(df["lang"].unique())
+    selected_langs = st.sidebar.multiselect(
+        "Posting language",
+        lang_options,
+        default=lang_options,
+    )
+
+    # city (multi-select, sorted by count)
+    city_counts = df["city"].value_counts()
+    city_options = list(city_counts.index)
+    selected_cities = st.sidebar.multiselect(
+        "City / location",
+        city_options,
+        default=[],
+        help="Leave empty to see all locations",
+    )
+
+    # date range
     df["published_date"] = pd.to_datetime(df["published_date"])
-    mask = df["published_date"].dt.date >= selected_date
-    df = df[mask]
+    min_date = df["published_date"].min().date()
+    max_date = df["published_date"].max().date()
+    date_range = st.sidebar.date_input(
+        "Published between",
+        value=(min_date, max_date),
+        min_value=min_date,
+        max_value=max_date,
+    )
+    if len(date_range) == 1:
+        date_range = (date_range[0], max_date)
 
-    # Filter jobs list to match DataFrame
-    jobs = [
-        job
-        for job in jobs
-        if pd.to_datetime(job["published_date"]).date() >= selected_date
-    ]
+    # --- apply filters ---
+    mask = (
+        df["position_type"].isin(selected_types)
+        & df["contract"].isin(selected_contracts)
+        & df["worktime"].isin(selected_worktime)
+        & df["lang"].isin(selected_langs)
+        & df["published_date"].dt.date.between(date_range[0], date_range[1])
+    )
+    if selected_cities:
+        mask &= df["city"].isin(selected_cities)
+    if search:
+        mask &= df["title"].str.lower().str.contains(search)
 
-    if len(jobs) == 0:
+    filtered = df[mask].reset_index(drop=True)
+    total = len(df)
+
+    st.sidebar.markdown("---")
+    st.sidebar.metric("Showing", f"{len(filtered)} / {total}")
+
+    if filtered.empty:
         st.warning("No jobs match the selected filters")
         return
 
-    # Display the map
+    # --- map + list ---
     col1, col2 = st.columns([2, 1])
 
     with col1:
-        # Create a folium map centered on the mean position of all jobs
-        m = folium.Map(location=[df["lat"].mean(), df["lon"].mean()], zoom_start=4)
+        m = folium.Map(
+            location=[filtered["position"].apply(lambda p: p["lat"]).mean(),
+                      filtered["position"].apply(lambda p: p["lng"]).mean()],
+            zoom_start=5,
+        )
 
-        # Add markers for each job
-        for idx, job in enumerate(jobs):
+        for idx, row in filtered.iterrows():
+            pos = row["position"]
+            contract_badge = " 🔒" if row["contract"].startswith("Permanent") else ""
             html = f"""
-                <div style="min-width: 200px;">
-                    <b>{job['title']}</b><br>
-                    Location: {job['city']}<br>
-                    Published: {job['published_date']}<br>
-                    <a href="{job['url']}" target="_blank">View Job Details</a>
+                <div style="min-width: 220px; font-family: sans-serif;">
+                    <b>{row['title']}</b><br>
+                    📍 {row['city']} &nbsp;·&nbsp; 📅 {row['published_date'].strftime('%Y-%m-%d')}<br>
+                    💼 {row['position_type']} &nbsp;·&nbsp; ⏱ {row['worktime']}{contract_badge}<br>
+                    <a href="{row['url']}" target="_blank" style="color: #4C4CFF; font-weight: bold;">→ View posting</a>
                 </div>
             """
-
             folium.Marker(
-                location=[job["position"]["lat"], job["position"]["lng"]],
-                popup=html,
-                tooltip=f"{job['title']} - {job['city']}",
-                id=f"marker_{idx}",
+                location=[pos["lat"], pos["lng"]],
+                popup=folium.Popup(html, max_width=300),
+                tooltip=f"{row['title'][:50]} — {row['city']}",
             ).add_to(m)
 
-        # Display the map
-        map_data = st_folium(m, width=800, height=600)
-
-        # Handle marker clicks
-        if map_data["last_clicked"]:
-            clicked_lat = map_data["last_clicked"]["lat"]
-            clicked_lng = map_data["last_clicked"]["lng"]
-            # Find the corresponding job
-            for idx, job in enumerate(jobs):
-                if (
-                    abs(job["position"]["lat"] - clicked_lat) < 0.0001
-                    and abs(job["position"]["lng"] - clicked_lng) < 0.0001
-                ):
-                    st.session_state.selected_job = idx
+        st_folium(m, width=800, height=600)
 
     with col2:
-        st.subheader("Job Listings")
-        for idx, job in enumerate(jobs):
-            with st.expander(
-                f"{job['title']} - {job['city']}",
-                expanded=st.session_state.get("selected_job") == idx,
-            ):
-                st.write(f"Published: {job['published_date']}")
-                st.markdown(f"[View Job Details]({job['url']})")
+        st.subheader(f"📋 {len(filtered)} positions")
+        for idx, row in filtered.iterrows():
+            contract_emoji = "🔒" if row["contract"].startswith("Permanent") else ""
+            label = f"{row['title'][:55]} — {row['city']}"
+            with st.expander(label):
+                st.write(f"**Type:** {row['position_type']}")
+                st.write(f"**Work time:** {row['worktime']}")
+                st.write(f"**Contract:** {row['contract']} {contract_emoji}")
+                st.write(f"**Published:** {row['published_date'].strftime('%Y-%m-%d')}")
+                st.markdown(f"[→ View posting]({row['url']})")
 
 
 if __name__ == "__main__":
